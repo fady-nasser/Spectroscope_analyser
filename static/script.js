@@ -19,9 +19,21 @@ const calibrateBtnComp = document.getElementById('comp-calibrate-btn');
 const compChartCtx = document.getElementById('comp-chart').getContext('2d');
 const compTargetLabel = document.getElementById('comp-target-label');
 
+// Live Camera View
+const liveView = document.getElementById('live-view');
+const canvasLive = document.getElementById('live-canvas');
+const ctxLive = canvasLive.getContext('2d');
+const videoLive = document.getElementById('live-video');
+const cameraSelect = document.getElementById('camera-select');
+const analyzeBtnLive = document.getElementById('live-analyze-btn');
+const calibrateBtnLive = document.getElementById('live-calibrate-btn');
+const liveIntensityChartCtx = document.getElementById('live-intensity-chart').getContext('2d');
+const liveRgbChartCtx = document.getElementById('live-rgb-chart').getContext('2d');
+
 // Navigation
 const navSingle = document.getElementById('nav-single');
 const navCompare = document.getElementById('nav-compare');
+const navLive = document.getElementById('nav-live');
 const subTabs = document.querySelectorAll('.sub-tab-btn');
 
 // --- State ---
@@ -37,11 +49,15 @@ const targets = {
     'comp_b': {
         image: null, cropRect: null, rotation: 0, analysisData: null, selectedPeaks: [],
         ctx: ctxComp, canvas: canvasComp
+    },
+    'live': {
+        image: null, cropRect: null, rotation: 0, analysisData: null, selectedPeaks: [],
+        ctx: ctxLive, canvas: canvasLive
     }
 };
 
-let activeView = 'single'; // 'single' or 'compare'
-let activeCompTarget = 'comp_a'; // 'comp_a' or 'comp_b' (only relevant in compare view)
+let activeView = 'single'; // 'single', 'compare', 'live'
+let activeCompTarget = 'comp_a'; // 'comp_a' or 'comp_b'
 
 // Shared Interaction State
 let isDragging = false;
@@ -49,13 +65,17 @@ let cropStart = null;
 let scaleX = 1, scaleY = 1;
 let offsetX = 0, offsetY = 0;
 
-let charts = {}; // intensity, rgb, comp
+let charts = {}; // intensity, rgb, comp, live_intensity, live_rgb
+let cameraStream = null;
+let isCameraRunning = false;
+let animationFrameId = null;
 
 // --- Event Listeners ---
 
 // Navigation
 navSingle.addEventListener('click', () => switchView('single'));
 navCompare.addEventListener('click', () => switchView('compare'));
+navLive.addEventListener('click', () => switchView('live'));
 
 // Sub Tabs
 subTabs.forEach(btn => {
@@ -78,8 +98,15 @@ document.getElementById('comp-reset-btn').addEventListener('click', () => resetT
 analyzeBtnComp.addEventListener('click', () => analyzeImage(activeCompTarget));
 calibrateBtnComp.addEventListener('click', () => startCalibration(activeCompTarget));
 
-// Canvas Events (Dynamic binding based on active view/target is tricky, so we bind to both and check state)
-[canvasSingle, canvasComp].forEach(c => {
+// Live View Controls
+cameraSelect.addEventListener('change', startCamera);
+document.getElementById('live-rotate-left').addEventListener('click', () => rotateImage('live', 'left'));
+document.getElementById('live-rotate-right').addEventListener('click', () => rotateImage('live', 'right'));
+analyzeBtnLive.addEventListener('click', captureAndAnalyze);
+calibrateBtnLive.addEventListener('click', () => startCalibration('live'));
+
+// Canvas Events
+[canvasSingle, canvasComp, canvasLive].forEach(c => {
     c.addEventListener('mousedown', (e) => startCrop(e, c));
     c.addEventListener('mousemove', (e) => drawCrop(e, c));
     c.addEventListener('mouseup', (e) => endCrop(e, c));
@@ -88,8 +115,7 @@ calibrateBtnComp.addEventListener('click', () => startCalibration(activeCompTarg
 // Modal Events
 document.getElementById('cancel-calib').addEventListener('click', () => {
     document.getElementById('calibration-modal').classList.add('hidden');
-    // Clear selection for active target
-    const targetId = activeView === 'single' ? 'single' : activeCompTarget;
+    const targetId = getActiveTargetId();
     targets[targetId].selectedPeaks = [];
     updateGraphAnnotations(targetId);
 });
@@ -98,41 +124,163 @@ document.getElementById('confirm-calib').addEventListener('click', submitCalibra
 
 // --- Functions ---
 
+function getActiveTargetId() {
+    if (activeView === 'single') return 'single';
+    if (activeView === 'compare') return activeCompTarget;
+    if (activeView === 'live') return 'live';
+    return 'single';
+}
+
 function switchView(view) {
     activeView = view;
 
+    // Hide all
+    singleView.classList.add('hidden');
+    compareView.classList.add('hidden');
+    liveView.classList.add('hidden');
+    navSingle.classList.remove('active');
+    navCompare.classList.remove('active');
+    navLive.classList.remove('active');
+
+    // Stop camera if leaving live view
+    if (view !== 'live') stopCamera();
+
     if (view === 'single') {
         singleView.classList.remove('hidden');
-        compareView.classList.add('hidden');
         navSingle.classList.add('active');
-        navCompare.classList.remove('active');
         renderCanvas('single');
         renderSingleGraphs();
-    } else {
-        singleView.classList.add('hidden');
+    } else if (view === 'compare') {
         compareView.classList.remove('hidden');
-        navSingle.classList.remove('active');
         navCompare.classList.add('active');
         renderCanvas(activeCompTarget);
         renderCompGraph();
+    } else if (view === 'live') {
+        liveView.classList.remove('hidden');
+        navLive.classList.add('active');
+        initCamera();
+        renderLiveGraphs();
     }
 }
 
 function switchCompTarget(targetId) {
     activeCompTarget = targetId;
-
-    // Update UI
-    subTabs.forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.target === targetId);
-    });
+    subTabs.forEach(btn => btn.classList.toggle('active', btn.dataset.target === targetId));
     compTargetLabel.textContent = targetId === 'comp_a' ? "(Image 1)" : "(Image 2)";
-
-    // Update Canvas
     renderCanvas(targetId);
-
-    // Update Calibrate Button
     calibrateBtnComp.disabled = !targets[targetId].analysisData;
 }
+
+// --- Camera Logic ---
+
+async function initCamera() {
+    // Request permission first to get labels
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop()); // Stop initial stream
+    } catch (err) {
+        console.error("Error requesting camera permission:", err);
+        alert("Please allow camera access to use this feature.");
+        return;
+    }
+
+    if (cameraSelect.options.length <= 1) {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+            // Clear existing options except first
+            cameraSelect.innerHTML = '<option value="">Select Camera...</option>';
+
+            videoDevices.forEach((device, index) => {
+                const option = document.createElement('option');
+                option.value = device.deviceId;
+                option.text = device.label || `Camera ${index + 1}`;
+                cameraSelect.appendChild(option);
+            });
+        } catch (err) {
+            console.error("Error enumerating devices:", err);
+        }
+    }
+
+    // Auto start first camera if none selected
+    if (!isCameraRunning && cameraSelect.options.length > 1) {
+        cameraSelect.selectedIndex = 1;
+        startCamera();
+    }
+}
+
+async function startCamera() {
+    stopCamera();
+    const deviceId = cameraSelect.value;
+    if (!deviceId) return;
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: deviceId } }
+        });
+        videoLive.srcObject = stream;
+        cameraStream = stream;
+        isCameraRunning = true;
+
+        // Start render loop
+        renderLoop();
+    } catch (err) {
+        console.error("Error starting camera:", err);
+        alert("Could not start camera. Please check permissions.");
+    }
+}
+
+function stopCamera() {
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+    }
+    isCameraRunning = false;
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+}
+
+function renderLoop() {
+    if (!isCameraRunning || activeView !== 'live') return;
+
+    // Draw video frame to canvas
+    // We treat the video frame as the "image" for the live target
+    targets['live'].image = videoLive;
+    renderCanvas('live');
+
+    animationFrameId = requestAnimationFrame(renderLoop);
+}
+
+function captureAndAnalyze() {
+    if (!isCameraRunning) return;
+
+    // Capture current frame as blob
+    // We need to draw the CURRENT state of the canvas (rotated/cropped?)
+    // Actually, backend expects an image file.
+    // Let's draw the raw video frame to a temp canvas to get the full image, 
+    // then send that. The backend handles rotation/cropping based on params.
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = videoLive.videoWidth;
+    tempCanvas.height = videoLive.videoHeight;
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.drawImage(videoLive, 0, 0);
+
+    tempCanvas.toBlob(blob => {
+        const formData = new FormData();
+        formData.append('file', blob, 'capture.png');
+        formData.append('target', 'live');
+
+        fetch('/api/upload', { method: 'POST', body: formData })
+            .then(res => res.json())
+            .then(data => {
+                // Now analyze
+                analyzeImage('live');
+            });
+    }, 'image/png');
+}
+
+// --- Image & Canvas ---
 
 function handleFileUpload(e, targetId) {
     const file = e.target.files[0];
@@ -148,7 +296,6 @@ function handleFileUpload(e, targetId) {
             loadImage(data.url, targetId);
         })
         .catch(err => console.error(err));
-
     e.target.value = '';
 }
 
@@ -163,20 +310,18 @@ function loadImage(url, targetId) {
         t.selectedPeaks = [];
 
         renderCanvas(targetId);
-        if (targetId === 'single') {
-            renderSingleGraphs(); // Clear/Reset
-            updateStatus('single');
-        } else {
-            renderCompGraph();
-            updateStatus(targetId);
-        }
+        if (targetId === 'single') renderSingleGraphs();
+        else if (targetId === 'live') renderLiveGraphs();
+        else renderCompGraph();
+
+        updateStatus(targetId);
     };
     img.src = url;
 }
 
 function rotateImage(targetId, direction) {
     const t = targets[targetId];
-    if (!t.image) return;
+    // For live, image is video element, but rotation logic is same
 
     if (direction === 'left') {
         t.rotation = (t.rotation - 90 + 360) % 360;
@@ -193,7 +338,7 @@ function rotateImage(targetId, direction) {
         .then(data => {
             t.cropRect = null;
             renderCanvas(targetId);
-            if (t.analysisData) analyzeImage(targetId);
+            if (t.analysisData && targetId !== 'live') analyzeImage(targetId);
         });
 }
 
@@ -203,22 +348,22 @@ function renderCanvas(targetId) {
     const ctx = t.ctx;
     const img = t.image;
 
-    // Only render if this canvas is currently visible/active
-    // (Though simple check: is targetId matching active context?)
-    if (targetId !== 'single' && targetId !== activeCompTarget) return;
-
     if (!img) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // If live and camera not running, clear
+        if (targetId === 'live' && !isCameraRunning) ctx.clearRect(0, 0, canvas.width, canvas.height);
         return;
     }
+
+    // For video, check if ready
+    if (img.tagName === 'VIDEO' && img.readyState < 2) return;
 
     const container = canvas.parentElement;
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
 
     const isVertical = t.rotation === 90 || t.rotation === 270;
-    const imgW = isVertical ? img.height : img.width;
-    const imgH = isVertical ? img.width : img.height;
+    const imgW = (img.tagName === 'VIDEO') ? (isVertical ? img.videoHeight : img.videoWidth) : (isVertical ? img.height : img.width);
+    const imgH = (img.tagName === 'VIDEO') ? (isVertical ? img.videoWidth : img.videoHeight) : (isVertical ? img.width : img.height);
 
     const imgRatio = imgW / imgH;
     const canvasRatio = canvas.width / canvas.height;
@@ -273,8 +418,10 @@ function renderCanvas(targetId) {
 // --- Cropping ---
 
 function startCrop(e, canvas) {
-    const targetId = (canvas === canvasSingle) ? 'single' : activeCompTarget;
-    if (!targets[targetId].image) return;
+    const targetId = getActiveTargetId();
+    // For live, we allow cropping even if image is video
+    if (!targets[targetId].image && targetId !== 'live') return;
+    if (targetId === 'live' && !isCameraRunning) return;
 
     const rect = canvas.getBoundingClientRect();
     cropStart = {
@@ -285,14 +432,20 @@ function startCrop(e, canvas) {
 }
 
 function drawCrop(e, canvas) {
-    const targetId = (canvas === canvasSingle) ? 'single' : activeCompTarget;
-    if (!isDragging || !targets[targetId].image) return;
+    const targetId = getActiveTargetId();
+    if (!isDragging) return;
 
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    renderCanvas(targetId); // Clear previous
+    // For live, renderLoop handles clearing, but we need to draw rect on top
+    // Actually renderCanvas clears.
+    // If live, renderLoop calls renderCanvas constantly.
+    // We should update cropRect dynamically or draw temp rect.
+    // Let's just draw temp rect here.
+
+    if (targetId !== 'live') renderCanvas(targetId);
 
     const w = x - cropStart.x;
     const h = y - cropStart.y;
@@ -304,8 +457,8 @@ function drawCrop(e, canvas) {
 }
 
 function endCrop(e, canvas) {
-    const targetId = (canvas === canvasSingle) ? 'single' : activeCompTarget;
-    if (!isDragging || !targets[targetId].image) return;
+    const targetId = getActiveTargetId();
+    if (!isDragging) return;
     isDragging = false;
 
     const rect = canvas.getBoundingClientRect();
@@ -325,18 +478,19 @@ function endCrop(e, canvas) {
         h: Math.round(h * scaleY)
     };
 
-    if (t.cropRect.w > 0 && t.cropRect.h > 0) {
-        renderCanvas(targetId);
-    } else {
+    if (t.cropRect.w <= 0 || t.cropRect.h <= 0) {
         t.cropRect = null;
     }
+
+    if (targetId !== 'live') renderCanvas(targetId);
 }
 
 // --- Analysis ---
 
 function analyzeImage(targetId) {
     const t = targets[targetId];
-    if (!t.image) return;
+    // For live, image is video, but we analyze the CAPTURED image which is on server
+    // So we just send analyze request.
 
     const payload = { target: targetId };
     if (t.cropRect) payload.crop = t.cropRect;
@@ -353,6 +507,9 @@ function analyzeImage(targetId) {
             if (targetId === 'single') {
                 renderSingleGraphs();
                 calibrateBtnSingle.disabled = false;
+            } else if (targetId === 'live') {
+                renderLiveGraphs();
+                calibrateBtnLive.disabled = false;
             } else {
                 renderCompGraph();
                 calibrateBtnComp.disabled = false;
@@ -363,14 +520,25 @@ function analyzeImage(targetId) {
 }
 
 function renderSingleGraphs() {
-    if (charts.intensity) charts.intensity.destroy();
-    if (charts.rgb) charts.rgb.destroy();
+    renderGraphSet('single', intensityChartCtx, rgbChartCtx);
+}
 
-    const data = targets['single'].analysisData;
+function renderLiveGraphs() {
+    renderGraphSet('live', liveIntensityChartCtx, liveRgbChartCtx);
+}
+
+function renderGraphSet(targetId, iCtx, rCtx) {
+    const chartKeyI = targetId === 'single' ? 'intensity' : 'live_intensity';
+    const chartKeyR = targetId === 'single' ? 'rgb' : 'live_rgb';
+
+    if (charts[chartKeyI]) charts[chartKeyI].destroy();
+    if (charts[chartKeyR]) charts[chartKeyR].destroy();
+
+    const data = targets[targetId].analysisData;
     if (!data) return;
 
     // Intensity
-    charts.intensity = new Chart(intensityChartCtx, {
+    charts[chartKeyI] = new Chart(iCtx, {
         type: 'line',
         data: {
             labels: data.x_axis,
@@ -396,12 +564,12 @@ function renderSingleGraphs() {
                 x: { ticks: { color: '#888' }, grid: { color: '#333' } },
                 y: { ticks: { color: '#888' }, grid: { color: '#333' } }
             },
-            onClick: (e, el, c) => handleGraphClick(e, el, c, 'single')
+            onClick: (e, el, c) => handleGraphClick(e, el, c, targetId)
         }
     });
 
     // RGB
-    charts.rgb = new Chart(rgbChartCtx, {
+    charts[chartKeyR] = new Chart(rCtx, {
         type: 'line',
         data: {
             labels: data.x_axis,
@@ -418,7 +586,8 @@ function renderSingleGraphs() {
             scales: { x: { display: false }, y: { display: false } }
         }
     });
-    updateGraphAnnotations('single');
+
+    updateGraphAnnotations(targetId);
 }
 
 function renderCompGraph() {
@@ -500,15 +669,11 @@ function renderCompGraph() {
 
 function startCalibration(targetId) {
     if (!targets[targetId].analysisData) return;
-    alert(`Click on TWO peaks in the graph to calibrate ${targetId === 'single' ? 'the image' : (targetId === 'comp_a' ? 'Image 1' : 'Image 2')}.`);
+    alert(`Click on TWO peaks in the graph to calibrate.`);
     targets[targetId].selectedPeaks = [];
 }
 
 function handleGraphClick(e, elements, chart, targetId) {
-    // In comparison mode, we need to be careful.
-    // The click handler is bound to the chart.
-    // If we are in comparison mode, we only allow calibration for the ACTIVE target.
-
     if (activeView === 'compare' && targetId !== activeCompTarget) return;
 
     const t = targets[targetId];
@@ -516,24 +681,16 @@ function handleGraphClick(e, elements, chart, targetId) {
 
     const points = chart.getElementsAtEventForMode(e, 'nearest', { intersect: false }, true);
     if (points.length) {
-        // Get x-value
         const datasetIndex = points[0].datasetIndex;
         const index = points[0].index;
-
-        // In comp mode, dataset 0 is A, 1 is B (if both exist).
-        // We need to ensure we clicked on the dataset corresponding to the active target.
-        // This is getting complicated.
-        // Let's simplify: Just find the nearest x-value in the ACTIVE target's data.
 
         let xValue;
         if (chart.config.type === 'scatter') {
             xValue = chart.data.datasets[datasetIndex].data[index].x;
         } else {
-            // Line chart (single mode)
             xValue = t.analysisData.x_axis[index];
         }
 
-        // Find closest peak in active target's data
         const peaksX = t.analysisData.peaks_x;
         const closestPeakX = peaksX.reduce((prev, curr) => {
             return (Math.abs(curr - xValue) < Math.abs(prev - xValue) ? curr : prev);
@@ -557,53 +714,44 @@ function handleGraphClick(e, elements, chart, targetId) {
 
 function updateGraphAnnotations(targetId) {
     const t = targets[targetId];
-    const chart = (targetId === 'single') ? charts.intensity : charts.comp;
+    let chart;
+    if (targetId === 'single') chart = charts.intensity;
+    else if (targetId === 'live') chart = charts.live_intensity;
+    else chart = charts.comp;
+
     if (!chart || !t.analysisData) return;
 
-    // Create dataset for peaks
     const selectedPoints = t.selectedPeaks.map(pixel => {
         const y = t.analysisData.total[pixel];
         const x = t.analysisData.x_axis[pixel];
         return (chart.config.type === 'scatter') ? { x, y } : y;
     });
 
-    // In single mode (line chart), we need array of nulls with values at specific indices?
-    // Or just a scatter dataset overlay. Chart.js allows mixed types.
-
     const dataset = {
-        label: `Peaks (${targetId})`,
+        label: `Peaks`,
         data: (chart.config.type === 'scatter') ? selectedPoints :
             t.analysisData.total.map((val, idx) => t.selectedPeaks.includes(idx) ? val : null),
-        backgroundColor: '#00f2ff',
         borderColor: '#fff',
         pointRadius: 6,
         type: 'scatter'
     };
 
-    // Manage datasets.
-    // Single: index 1 is peaks.
-    // Comp: index 2, 3...
-
-    if (targetId === 'single') {
-        if (chart.data.datasets.length > 1) {
-            chart.data.datasets[1] = dataset;
-        } else {
-            chart.data.datasets.push(dataset);
-        }
-    } else {
-        // Comp graph: We might have peaks for A and B.
-        // Let's just redraw the whole comp graph to be safe.
-        // But we are inside updateGraphAnnotations...
-        // Let's just re-render comp graph entirely if in comp mode.
+    if (targetId === 'comp_a' || targetId === 'comp_b') {
         if (activeView === 'compare') renderCompGraph();
         return;
+    }
+
+    if (chart.data.datasets.length > 1) {
+        chart.data.datasets[1] = dataset;
+    } else {
+        chart.data.datasets.push(dataset);
     }
 
     chart.update();
 }
 
 function showCalibrationModal() {
-    const targetId = activeView === 'single' ? 'single' : activeCompTarget;
+    const targetId = getActiveTargetId();
     const t = targets[targetId];
     document.getElementById('p1-pixel').textContent = t.selectedPeaks[0];
     document.getElementById('p2-pixel').textContent = t.selectedPeaks[1];
@@ -616,7 +764,7 @@ function submitCalibration() {
 
     if (!w1 || !w2) return;
 
-    const targetId = activeView === 'single' ? 'single' : activeCompTarget;
+    const targetId = getActiveTargetId();
     const t = targets[targetId];
 
     fetch('/api/calibrate', {
@@ -642,6 +790,8 @@ function updateStatus(targetId) {
 
     if (targetId === 'single') {
         document.querySelector('#single-view .status-text').textContent = status;
+    } else if (targetId === 'live') {
+        document.querySelector('#live-status .status-text').textContent = status;
     } else {
         document.querySelector(`#status-${targetId} .val`).textContent = status;
     }
@@ -660,6 +810,10 @@ function resetTarget(targetId) {
         renderSingleGraphs();
         updateStatus('single');
         fileInputSingle.value = '';
+    } else if (targetId === 'live') {
+        renderLiveGraphs();
+        updateStatus('live');
+        // Don't stop camera on reset, just clear data
     } else {
         renderCompGraph();
         updateStatus(targetId);

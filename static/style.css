@@ -156,6 +156,7 @@ h2 {
 .controls {
     display: flex;
     gap: 10px;
+    align-items: center;
 }
 
 .btn {
@@ -213,6 +214,24 @@ h2 {
     padding: 12px;
     font-size: 1rem;
     letter-spacing: 1px;
+}
+
+/* Dropdown */
+.dropdown {
+    background: #333;
+    color: white;
+    border: 1px solid #555;
+    padding: 8px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    outline: none;
+    cursor: pointer;
+    max-width: 200px;
+}
+
+.dropdown:hover {
+    border-color: var(--accent-color);
 }
 
 /* Canvas Area */

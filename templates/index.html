@@ -17,6 +17,7 @@
             <nav class="main-nav">
                 <button id="nav-single" class="nav-btn active">Single Analysis</button>
                 <button id="nav-compare" class="nav-btn">Comparison Mode</button>
+                <button id="nav-live" class="nav-btn">Live Camera</button>
             </nav>
         </header>
 
@@ -118,6 +119,55 @@
                     <div class="status-bar">
                         <div id="status-comp-a">Image 1: <span class="val">No Data</span></div>
                         <div id="status-comp-b">Image 2: <span class="val">No Data</span></div>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <!-- LIVE CAMERA VIEW -->
+        <div id="live-view" class="view-container hidden">
+            <main class="grid-layout">
+                <!-- Left Panel: Camera Feed -->
+                <section class="panel image-panel">
+                    <div class="panel-header">
+                        <h2>Live Camera</h2>
+                        <div class="controls">
+                            <select id="camera-select" class="dropdown">
+                                <option value="">Select Camera...</option>
+                            </select>
+                            <button id="live-rotate-left" class="btn btn-icon" title="Rotate Left">↺</button>
+                            <button id="live-rotate-right" class="btn btn-icon" title="Rotate Right">↻</button>
+                        </div>
+                    </div>
+
+                    <div class="canvas-container">
+                        <canvas id="live-canvas"></canvas>
+                        <video id="live-video" autoplay playsinline style="display: none;"></video>
+                    </div>
+
+                    <div class="action-bar">
+                        <p class="instruction">Drag to crop. Click Analyze to capture.</p>
+                        <button id="live-analyze-btn" class="btn btn-accent large">CAPTURE & ANALYZE</button>
+                    </div>
+                </section>
+
+                <!-- Right Panel: Live Analysis -->
+                <section class="panel analysis-panel">
+                    <div class="panel-header">
+                        <h2>Captured Analysis</h2>
+                        <button id="live-calibrate-btn" class="btn btn-secondary" disabled>Calibrate</button>
+                    </div>
+
+                    <div class="graph-container">
+                        <canvas id="live-intensity-chart"></canvas>
+                    </div>
+
+                    <div class="graph-container small">
+                        <canvas id="live-rgb-chart"></canvas>
+                    </div>
+
+                    <div id="live-status" class="status-bar">
+                        Status: <span class="status-text">Uncalibrated</span>
                     </div>
                 </section>
             </main>

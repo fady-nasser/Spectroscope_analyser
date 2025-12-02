@@ -29,7 +29,8 @@ class AppState:
         self.targets = {
             'single': TargetState(),
             'comp_a': TargetState(),
-            'comp_b': TargetState()
+            'comp_b': TargetState(),
+            'live': TargetState()
         }
 
 state = AppState()
