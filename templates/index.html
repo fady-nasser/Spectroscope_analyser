@@ -14,55 +14,114 @@
     <div class="app-container">
         <header>
             <h1>SPECTROMETER <span class="accent">PRO</span></h1>
+            <nav class="main-nav">
+                <button id="nav-single" class="nav-btn active">Single Analysis</button>
+                <button id="nav-compare" class="nav-btn">Comparison Mode</button>
+            </nav>
         </header>
 
-        <main class="grid-layout">
-            <!-- Left Panel: Image & Controls -->
-            <section class="panel image-panel">
-                <div class="panel-header">
-                    <h2>Source Image</h2>
-                    <div class="controls">
-                        <label for="file-upload" class="btn btn-primary">
-                            <i class="icon">📁</i> Load
-                        </label>
-                        <input type="file" id="file-upload" accept="image/*" hidden>
-                        <button id="rotate-left" class="btn btn-icon" title="Rotate Left">↺</button>
-                        <button id="rotate-right" class="btn btn-icon" title="Rotate Right">↻</button>
-                        <button id="reset-btn" class="btn btn-danger">Reset</button>
+        <!-- SINGLE VIEW -->
+        <div id="single-view" class="view-container">
+            <main class="grid-layout">
+                <!-- Left Panel: Image & Controls -->
+                <section class="panel image-panel">
+                    <div class="panel-header">
+                        <h2>Source Image</h2>
+                        <div class="controls">
+                            <label for="file-upload" class="btn btn-primary">
+                                <i class="icon">📁</i> Load
+                            </label>
+                            <input type="file" id="file-upload" accept="image/*" hidden>
+                            <button id="rotate-left" class="btn btn-icon" title="Rotate Left">↺</button>
+                            <button id="rotate-right" class="btn btn-icon" title="Rotate Right">↻</button>
+                            <button id="reset-btn" class="btn btn-danger">Reset</button>
+                        </div>
                     </div>
-                </div>
 
-                <div class="canvas-container">
-                    <canvas id="image-canvas"></canvas>
-                    <div id="crop-overlay"></div>
-                </div>
+                    <div class="canvas-container">
+                        <canvas id="image-canvas"></canvas>
+                        <div id="crop-overlay"></div>
+                    </div>
 
-                <div class="action-bar">
-                    <p class="instruction">Drag to crop the rainbow band</p>
-                    <button id="analyze-btn" class="btn btn-accent large">ANALYZE SPECTRUM</button>
-                </div>
-            </section>
+                    <div class="action-bar">
+                        <p class="instruction">Drag to crop the rainbow band</p>
+                        <button id="analyze-btn" class="btn btn-accent large">ANALYZE SPECTRUM</button>
+                    </div>
+                </section>
 
-            <!-- Right Panel: Analysis -->
-            <section class="panel analysis-panel">
-                <div class="panel-header">
-                    <h2>Spectral Analysis</h2>
-                    <button id="calibrate-btn" class="btn btn-secondary" disabled>Calibrate</button>
-                </div>
+                <!-- Right Panel: Analysis -->
+                <section class="panel analysis-panel">
+                    <div class="panel-header">
+                        <h2>Spectral Analysis</h2>
+                        <button id="calibrate-btn" class="btn btn-secondary" disabled>Calibrate</button>
+                    </div>
 
-                <div class="graph-container">
-                    <canvas id="intensity-chart"></canvas>
-                </div>
+                    <div class="graph-container">
+                        <canvas id="intensity-chart"></canvas>
+                    </div>
 
-                <div class="graph-container small">
-                    <canvas id="rgb-chart"></canvas>
-                </div>
+                    <div class="graph-container small">
+                        <canvas id="rgb-chart"></canvas>
+                    </div>
 
-                <div id="calibration-status" class="status-bar">
-                    Status: <span class="status-text">Uncalibrated</span>
-                </div>
-            </section>
-        </main>
+                    <div id="calibration-status" class="status-bar">
+                        Status: <span class="status-text">Uncalibrated</span>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <!-- COMPARISON VIEW -->
+        <div id="compare-view" class="view-container hidden">
+            <div class="sub-tabs">
+                <button class="sub-tab-btn active" data-target="comp_a">Image 1</button>
+                <button class="sub-tab-btn" data-target="comp_b">Image 2</button>
+            </div>
+
+            <main class="grid-layout">
+                <!-- Left Panel: Comparison Image Editor -->
+                <section class="panel image-panel">
+                    <div class="panel-header">
+                        <h2>Source Image <span id="comp-target-label">(Image 1)</span></h2>
+                        <div class="controls">
+                            <label for="comp-file-upload" class="btn btn-primary">
+                                <i class="icon">📁</i> Load
+                            </label>
+                            <input type="file" id="comp-file-upload" accept="image/*" hidden>
+                            <button id="comp-rotate-left" class="btn btn-icon" title="Rotate Left">↺</button>
+                            <button id="comp-rotate-right" class="btn btn-icon" title="Rotate Right">↻</button>
+                            <button id="comp-reset-btn" class="btn btn-danger">Reset</button>
+                        </div>
+                    </div>
+
+                    <div class="canvas-container">
+                        <canvas id="comp-image-canvas"></canvas>
+                    </div>
+
+                    <div class="action-bar">
+                        <p class="instruction">Drag to crop the rainbow band</p>
+                        <button id="comp-analyze-btn" class="btn btn-accent large">ANALYZE & UPDATE GRAPH</button>
+                    </div>
+                </section>
+
+                <!-- Right Panel: Comparison Analysis -->
+                <section class="panel analysis-panel">
+                    <div class="panel-header">
+                        <h2>Comparison Graph</h2>
+                        <button id="comp-calibrate-btn" class="btn btn-secondary" disabled>Calibrate Current</button>
+                    </div>
+
+                    <div class="graph-container large">
+                        <canvas id="comp-chart"></canvas>
+                    </div>
+
+                    <div class="status-bar">
+                        <div id="status-comp-a">Image 1: <span class="val">No Data</span></div>
+                        <div id="status-comp-b">Image 2: <span class="val">No Data</span></div>
+                    </div>
+                </section>
+            </main>
+        </div>
     </div>
 
     <!-- Calibration Modal -->

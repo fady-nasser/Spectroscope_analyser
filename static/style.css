@@ -36,6 +36,9 @@ header {
     margin-bottom: 20px;
     border-bottom: 1px solid var(--border-color);
     padding-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 h1 {
@@ -46,6 +49,75 @@ h1 {
 .accent {
     color: var(--accent-color);
     font-weight: 600;
+}
+
+/* Main Navigation */
+.main-nav {
+    display: flex;
+    gap: 10px;
+}
+
+.nav-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.nav-btn.active {
+    background: var(--accent-color);
+    color: #000;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 10px rgba(0, 242, 255, 0.2);
+}
+
+.nav-btn:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+/* Sub Tabs (Comparison Mode) */
+.sub-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.sub-tab-btn {
+    background: var(--panel-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.sub-tab-btn.active {
+    background: #333;
+    color: var(--accent-color);
+    border-color: var(--accent-color);
+}
+
+.sub-tab-btn:hover {
+    background: #2a2a2a;
+}
+
+/* Views */
+.view-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.view-container.hidden {
+    display: none;
 }
 
 .grid-layout {
@@ -182,6 +254,11 @@ canvas {
     flex: 1;
 }
 
+.graph-container.large {
+    flex: 1;
+    /* Take full height in comparison view */
+}
+
 /* Modal */
 .modal {
     position: fixed;
@@ -234,4 +311,9 @@ input {
     margin-top: auto;
     font-size: 0.9rem;
     color: var(--text-secondary);
+}
+
+.status-bar .val {
+    color: var(--text-primary);
+    font-weight: 500;
 }

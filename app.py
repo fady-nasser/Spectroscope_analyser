@@ -18,12 +18,19 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Global state (simple version for single user local app)
-# In a real multi-user web app, this should be in a database or session-based storage
-class AppState:
+class TargetState:
     def __init__(self):
         self.current_image_path = None
         self.rotation_angle = 0
         self.calibration = {'slope': 1.0, 'intercept': 0.0, 'is_calibrated': False}
+
+class AppState:
+    def __init__(self):
+        self.targets = {
+            'single': TargetState(),
+            'comp_a': TargetState(),
+            'comp_b': TargetState()
+        }
 
 state = AppState()
 
@@ -36,49 +43,61 @@ def upload_file():
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     file = request.files['file']
+    target_id = request.form.get('target', 'single')
+    
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
     
     if file:
-        filename = secure_filename(file.filename)
+        filename = secure_filename(f"{target_id}_{file.filename}")
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
-        state.current_image_path = filepath
-        state.rotation_angle = 0
-        state.calibration = {'slope': 1.0, 'intercept': 0.0, 'is_calibrated': False}
+        target = state.targets[target_id]
+        target.current_image_path = filepath
+        target.rotation_angle = 0
+        target.calibration = {'slope': 1.0, 'intercept': 0.0, 'is_calibrated': False}
         
-        return jsonify({'url': filepath, 'filename': filename})
+        return jsonify({'url': filepath, 'filename': filename, 'target': target_id})
 
 @app.route('/api/rotate', methods=['POST'])
 def rotate_image():
-    direction = request.json.get('direction')
-    if direction == 'left':
-        state.rotation_angle = (state.rotation_angle - 90) % 360
-    elif direction == 'right':
-        state.rotation_angle = (state.rotation_angle + 90) % 360
+    data = request.json
+    direction = data.get('direction')
+    target_id = data.get('target', 'single')
+    target = state.targets[target_id]
     
-    return jsonify({'angle': state.rotation_angle})
+    if direction == 'left':
+        target.rotation_angle = (target.rotation_angle - 90) % 360
+    elif direction == 'right':
+        target.rotation_angle = (target.rotation_angle + 90) % 360
+    
+    return jsonify({'angle': target.rotation_angle, 'target': target_id})
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
-    if not state.current_image_path:
+    data = request.json
+    target_id = data.get('target', 'single')
+    target = state.targets[target_id]
+    
+    if not target.current_image_path:
         return jsonify({'error': 'No image loaded'}), 400
     
     try:
         # Load image
-        img = load_image(state.current_image_path)
+        img = load_image(target.current_image_path)
         
         # Apply rotation
-        if state.rotation_angle == 90:
+        angle = target.rotation_angle
+        if angle == 90:
             img = np.rot90(img, k=-1)
-        elif state.rotation_angle == 180:
+        elif angle == 180:
             img = np.rot90(img, k=2)
-        elif state.rotation_angle == 270:
+        elif angle == 270:
             img = np.rot90(img, k=1)
             
         # Apply crop if provided
-        crop_data = request.json.get('crop')
+        crop_data = data.get('crop')
         if crop_data:
             x = int(crop_data['x'])
             y = int(crop_data['y'])
@@ -96,23 +115,24 @@ def analyze():
         x_axis = np.arange(len(rgb_profiles['total'])).tolist()
         
         # Apply calibration if exists
-        if state.calibration['is_calibrated']:
-            slope = state.calibration['slope']
-            intercept = state.calibration['intercept']
+        if target.calibration['is_calibrated']:
+            slope = target.calibration['slope']
+            intercept = target.calibration['intercept']
             x_axis = [slope * x + intercept for x in x_axis]
             peaks_x = [slope * p + intercept for p in peaks]
         else:
             peaks_x = peaks.tolist()
             
         return jsonify({
+            'target': target_id,
             'x_axis': x_axis,
             'total': rgb_profiles['total'].tolist(),
             'red': rgb_profiles['red'].tolist(),
             'green': rgb_profiles['green'].tolist(),
             'blue': rgb_profiles['blue'].tolist(),
-            'peaks': peaks.tolist(), # Return pixel indices for interaction
-            'peaks_x': peaks_x,      # Return calibrated values for display
-            'is_calibrated': state.calibration['is_calibrated']
+            'peaks': peaks.tolist(),
+            'peaks_x': peaks_x,
+            'is_calibrated': target.calibration['is_calibrated']
         })
         
     except Exception as e:
@@ -121,6 +141,9 @@ def analyze():
 @app.route('/api/calibrate', methods=['POST'])
 def calibrate():
     data = request.json
+    target_id = data.get('target', 'single')
+    target = state.targets[target_id]
+    
     p1 = data.get('p1')
     w1 = data.get('w1')
     p2 = data.get('p2')
@@ -131,12 +154,12 @@ def calibrate():
         
     try:
         slope, intercept = linear_calibration(p1, w1, p2, w2)
-        state.calibration = {
+        target.calibration = {
             'slope': slope,
             'intercept': intercept,
             'is_calibrated': True
         }
-        return jsonify(state.calibration)
+        return jsonify(target.calibration)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
