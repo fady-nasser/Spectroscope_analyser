@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spectrometer Pro</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <header>
+            <h1>SPECTROMETER <span class="accent">PRO</span></h1>
+        </header>
+
+        <main class="grid-layout">
+            <!-- Left Panel: Image & Controls -->
+            <section class="panel image-panel">
+                <div class="panel-header">
+                    <h2>Source Image</h2>
+                    <div class="controls">
+                        <label for="file-upload" class="btn btn-primary">
+                            <i class="icon">📁</i> Load
+                        </label>
+                        <input type="file" id="file-upload" accept="image/*" hidden>
+                        <button id="rotate-left" class="btn btn-icon" title="Rotate Left">↺</button>
+                        <button id="rotate-right" class="btn btn-icon" title="Rotate Right">↻</button>
+                        <button id="reset-btn" class="btn btn-danger">Reset</button>
+                    </div>
+                </div>
+
+                <div class="canvas-container">
+                    <canvas id="image-canvas"></canvas>
+                    <div id="crop-overlay"></div>
+                </div>
+
+                <div class="action-bar">
+                    <p class="instruction">Drag to crop the rainbow band</p>
+                    <button id="analyze-btn" class="btn btn-accent large">ANALYZE SPECTRUM</button>
+                </div>
+            </section>
+
+            <!-- Right Panel: Analysis -->
+            <section class="panel analysis-panel">
+                <div class="panel-header">
+                    <h2>Spectral Analysis</h2>
+                    <button id="calibrate-btn" class="btn btn-secondary" disabled>Calibrate</button>
+                </div>
+
+                <div class="graph-container">
+                    <canvas id="intensity-chart"></canvas>
+                </div>
+
+                <div class="graph-container small">
+                    <canvas id="rgb-chart"></canvas>
+                </div>
+
+                <div id="calibration-status" class="status-bar">
+                    Status: <span class="status-text">Uncalibrated</span>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Calibration Modal -->
+    <div id="calibration-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Calibrate Wavelengths</h3>
+            <p>Enter known wavelengths for the selected peaks:</p>
+            <div class="input-group">
+                <label>Peak 1 (<span id="p1-pixel">0</span> px):</label>
+                <input type="number" id="p1-wavelength" placeholder="e.g. 532"> nm
+            </div>
+            <div class="input-group">
+                <label>Peak 2 (<span id="p2-pixel">0</span> px):</label>
+                <input type="number" id="p2-wavelength" placeholder="e.g. 650"> nm
+            </div>
+            <div class="modal-actions">
+                <button id="cancel-calib" class="btn btn-text">Cancel</button>
+                <button id="confirm-calib" class="btn btn-accent">Apply Calibration</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+
+</html>
