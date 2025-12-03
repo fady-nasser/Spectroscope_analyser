@@ -116,11 +116,33 @@ def analyze():
         x_axis = np.arange(len(rgb_profiles['total'])).tolist()
         
         # Apply calibration if exists
+        slope = 1.0
+        intercept = 0.0
+        is_reversed = False
+        
         if target.calibration['is_calibrated']:
             slope = target.calibration['slope']
             intercept = target.calibration['intercept']
             x_axis = [slope * x + intercept for x in x_axis]
             peaks_x = [slope * p + intercept for p in peaks]
+            
+            # Sort if inverted (e.g. negative slope)
+            if x_axis[0] > x_axis[-1]:
+                is_reversed = True
+                x_axis = x_axis[::-1]
+                rgb_profiles['total'] = rgb_profiles['total'][::-1]
+                rgb_profiles['red'] = rgb_profiles['red'][::-1]
+                rgb_profiles['green'] = rgb_profiles['green'][::-1]
+                rgb_profiles['blue'] = rgb_profiles['blue'][::-1]
+                
+                # Update peak indices for reversed arrays
+                length = len(rgb_profiles['total'])
+                peaks = np.array([length - 1 - p for p in peaks])
+                
+                # Sort peaks and peaks_x to keep them in ascending index order
+                sort_idx = np.argsort(peaks)
+                peaks = peaks[sort_idx]
+                peaks_x = np.array(peaks_x)[sort_idx].tolist()
         else:
             peaks_x = peaks.tolist()
             
@@ -133,7 +155,10 @@ def analyze():
             'blue': rgb_profiles['blue'].tolist(),
             'peaks': peaks.tolist(),
             'peaks_x': peaks_x,
-            'is_calibrated': target.calibration['is_calibrated']
+            'is_calibrated': target.calibration['is_calibrated'],
+            'slope': slope,
+            'intercept': intercept,
+            'is_reversed': is_reversed
         })
         
     except Exception as e:

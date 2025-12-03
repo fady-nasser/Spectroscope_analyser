@@ -102,7 +102,7 @@ calibrateBtnComp.addEventListener('click', () => startCalibration(activeCompTarg
 cameraSelect.addEventListener('change', startCamera);
 document.getElementById('live-rotate-left').addEventListener('click', () => rotateImage('live', 'left'));
 document.getElementById('live-rotate-right').addEventListener('click', () => rotateImage('live', 'right'));
-analyzeBtnLive.addEventListener('click', captureAndAnalyze);
+analyzeBtnLive.addEventListener('click', () => captureAndAnalyze(false));
 calibrateBtnLive.addEventListener('click', () => startCalibration('live'));
 
 // Canvas Events
@@ -225,6 +225,7 @@ async function startCamera() {
 
         // Start render loop
         renderLoop();
+        startLiveAnalysis();
     } catch (err) {
         console.error("Error starting camera:", err);
         alert("Could not start camera. Please check permissions.");
@@ -238,6 +239,29 @@ function stopCamera() {
     }
     isCameraRunning = false;
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    stopLiveAnalysis();
+}
+
+let liveAnalysisInterval = null;
+
+function startLiveAnalysis() {
+    if (liveAnalysisInterval) clearInterval(liveAnalysisInterval);
+    liveAnalysisInterval = setInterval(() => {
+        if (isCameraRunning && activeView === 'live') {
+            // Only analyze if not currently selecting peaks for calibration
+            // to avoid graph jumping while clicking
+            if (targets['live'].selectedPeaks.length === 0) {
+                captureAndAnalyze(true); // true = silent mode (no alerts)
+            }
+        }
+    }, 500); // Analyze every 500ms
+}
+
+function stopLiveAnalysis() {
+    if (liveAnalysisInterval) {
+        clearInterval(liveAnalysisInterval);
+        liveAnalysisInterval = null;
+    }
 }
 
 function renderLoop() {
@@ -251,20 +275,72 @@ function renderLoop() {
     animationFrameId = requestAnimationFrame(renderLoop);
 }
 
-function captureAndAnalyze() {
-    if (!isCameraRunning) return;
+function toggleCapture() {
+    const captureBtn = document.getElementById('live-capture-btn');
 
-    // Capture current frame as blob
-    // We need to draw the CURRENT state of the canvas (rotated/cropped?)
-    // Actually, backend expects an image file.
-    // Let's draw the raw video frame to a temp canvas to get the full image, 
-    // then send that. The backend handles rotation/cropping based on params.
+    if (isCameraRunning) {
+        // Stop camera (Freeze)
+        stopLiveAnalysis();
+        stopCamera();
+        captureBtn.textContent = "RESUME";
+        captureBtn.classList.add('resume-btn');
+    } else {
+        // Start camera (Resume)
+        startCamera();
+        captureBtn.textContent = "CAPTURE";
+        captureBtn.classList.remove('resume-btn');
+    }
+}
+
+function captureAndAnalyze(silent = false) {
+    // If camera is running, we can capture from video.
+    // If camera is frozen (stopped), we should capture from the canvas (since video might be empty/black if stopped?)
+    // Actually, stopCamera clears srcObject, so videoLive might be blank.
+    // But renderLoop draws to canvas. When stopped, renderLoop stops.
+    // So the canvas holds the last frame.
+
+    // However, for the backend we need the full resolution image.
+    // If we stopped the camera, we can't get it from videoLive anymore if it's cleared.
+    // We need to ensure that when we "freeze", we keep the last frame available.
+    // OR, we just don't clear the video srcObject, just pause it?
+    // navigator.mediaDevices.getUserMedia stream tracks stop() clears it.
+
+    // Better approach for "Freeze":
+    // Don't actually stop the stream tracks, just pause the video element?
+    // Or just stop the renderLoop?
+
+    // Let's rely on the fact that if isCameraRunning is true, we use videoLive.
+    // If false, we assume the user "captured" and we should use the canvas or a saved frame.
+    // But currently stopCamera() clears everything.
+
+    // Let's modify stopCamera to NOT clear if we are just "pausing/freezing".
+    // Actually, simpler: 
+    // When "Capture" is clicked, we draw the current video frame to an offscreen canvas/image and store it in targets['live'].image
+    // Then we stop the camera.
+    // Then renderCanvas uses that stored image.
+
+    // But wait, targets['live'].image is ALREADY set to videoLive in renderLoop.
+    // If we stop camera, videoLive goes black?
+
+    // Let's change toggleCapture to handle this.
+
+    if (silent && !isCameraRunning) return; // Don't auto-analyze if frozen
 
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = videoLive.videoWidth;
-    tempCanvas.height = videoLive.videoHeight;
+    tempCanvas.width = videoLive.videoWidth || canvasLive.width;
+    tempCanvas.height = videoLive.videoHeight || canvasLive.height;
     const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.drawImage(videoLive, 0, 0);
+
+    if (isCameraRunning) {
+        tempCtx.drawImage(videoLive, 0, 0);
+    } else {
+        // If frozen, draw from the live canvas (which has the last frame)
+        // Note: canvas might be cropped/rotated visually, but here we want the full source?
+        // Actually, if we froze it, we should have saved the full frame.
+        // For now, let's assume we can draw from the canvas, but that's the display canvas.
+        // Let's use the videoLive if possible, or maybe we shouldn't stop the tracks, just pause?
+        tempCtx.drawImage(videoLive, 0, 0);
+    }
 
     tempCanvas.toBlob(blob => {
         const formData = new FormData();
@@ -274,11 +350,13 @@ function captureAndAnalyze() {
         fetch('/api/upload', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(data => {
-                // Now analyze
                 analyzeImage('live');
             });
     }, 'image/png');
 }
+
+// Add event listener for the new button
+document.getElementById('live-capture-btn').addEventListener('click', toggleCapture);
 
 // --- Image & Canvas ---
 
@@ -530,62 +608,103 @@ function renderLiveGraphs() {
 function renderGraphSet(targetId, iCtx, rCtx) {
     const chartKeyI = targetId === 'single' ? 'intensity' : 'live_intensity';
     const chartKeyR = targetId === 'single' ? 'rgb' : 'live_rgb';
-
-    if (charts[chartKeyI]) charts[chartKeyI].destroy();
-    if (charts[chartKeyR]) charts[chartKeyR].destroy();
-
     const data = targets[targetId].analysisData;
+
     if (!data) return;
 
-    // Intensity
-    charts[chartKeyI] = new Chart(iCtx, {
-        type: 'line',
-        data: {
-            labels: data.x_axis,
-            datasets: [{
-                label: 'Total Intensity',
-                data: data.total,
-                borderColor: '#00f2ff',
-                backgroundColor: 'rgba(0, 242, 255, 0.1)',
-                borderWidth: 2,
-                pointRadius: 0,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'nearest', axis: 'x', intersect: false },
-            plugins: {
-                legend: { labels: { color: '#fff' } },
-                tooltip: { callbacks: { label: (ctx) => `Intensity: ${ctx.raw.toFixed(1)}` } }
-            },
-            scales: {
-                x: { ticks: { color: '#888' }, grid: { color: '#333' } },
-                y: { ticks: { color: '#888' }, grid: { color: '#333' } }
-            },
-            onClick: (e, el, c) => handleGraphClick(e, el, c, targetId)
-        }
-    });
+    // Convert to x-y pairs for proper wavelength display
+    const intensityData = data.x_axis.map((x, i) => ({ x: x, y: data.total[i] }));
+    const redData = data.x_axis.map((x, i) => ({ x: x, y: data.red[i] }));
+    const greenData = data.x_axis.map((x, i) => ({ x: x, y: data.green[i] }));
+    const blueData = data.x_axis.map((x, i) => ({ x: x, y: data.blue[i] }));
 
-    // RGB
-    charts[chartKeyR] = new Chart(rCtx, {
-        type: 'line',
-        data: {
-            labels: data.x_axis,
-            datasets: [
-                { label: 'Red', data: data.red, borderColor: '#ff4757', borderWidth: 1, pointRadius: 0 },
-                { label: 'Green', data: data.green, borderColor: '#2ed573', borderWidth: 1, pointRadius: 0 },
-                { label: 'Blue', data: data.blue, borderColor: '#1e90ff', borderWidth: 1, pointRadius: 0 }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#fff' } } },
-            scales: { x: { display: false }, y: { display: false } }
-        }
-    });
+    // --- Intensity Chart ---
+    if (charts[chartKeyI]) {
+        // Update existing chart
+        charts[chartKeyI].data.datasets[0].data = intensityData;
+        charts[chartKeyI].update('none'); // No animation
+    } else {
+        // Create new chart
+        charts[chartKeyI] = new Chart(iCtx, {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label: 'Total Intensity',
+                    data: intensityData,
+                    borderColor: '#00f2ff',
+                    backgroundColor: 'rgba(0, 242, 255, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    showLine: true,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 500 }, // Initial animation
+                interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#fff' } },
+                    tooltip: { callbacks: { label: (ctx) => `Intensity: ${ctx.raw.y.toFixed(1)}` } }
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        ticks: {
+                            color: '#888',
+                            maxTicksLimit: 10,
+                            callback: function (value) {
+                                return value.toFixed(2);
+                            }
+                        },
+                        grid: { color: '#333' },
+                        title: {
+                            display: true,
+                            text: data.is_calibrated ? 'Wavelength (nm)' : 'Pixel Position',
+                            color: '#888'
+                        }
+                    },
+                    y: { ticks: { color: '#888' }, grid: { color: '#333' } }
+                },
+                onClick: (e, el, c) => handleGraphClick(e, el, c, targetId)
+            }
+        });
+    }
+
+    // --- RGB Chart ---
+    if (charts[chartKeyR]) {
+        // Update existing chart
+        charts[chartKeyR].data.datasets[0].data = redData;
+        charts[chartKeyR].data.datasets[1].data = greenData;
+        charts[chartKeyR].data.datasets[2].data = blueData;
+        charts[chartKeyR].update('none'); // No animation
+    } else {
+        // Create new chart
+        charts[chartKeyR] = new Chart(rCtx, {
+            type: 'scatter',
+            data: {
+                datasets: [
+                    { label: 'Red', data: redData, borderColor: '#ff4757', borderWidth: 1, pointRadius: 0, showLine: true },
+                    { label: 'Green', data: greenData, borderColor: '#2ed573', borderWidth: 1, pointRadius: 0, showLine: true },
+                    { label: 'Blue', data: blueData, borderColor: '#1e90ff', borderWidth: 1, pointRadius: 0, showLine: true }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 500 }, // Initial animation
+                plugins: { legend: { labels: { color: '#fff' } } },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        display: false
+                    },
+                    y: { display: false }
+                }
+            }
+        });
+    }
 
     updateGraphAnnotations(targetId);
 }
@@ -656,7 +775,12 @@ function renderCompGraph() {
                 x: {
                     type: 'linear',
                     position: 'bottom',
-                    ticks: { color: '#888' },
+                    ticks: {
+                        color: '#888',
+                        callback: function (value, index, values) {
+                            return typeof value === 'number' ? value.toFixed(2) : value;
+                        }
+                    },
                     grid: { color: '#333' },
                     title: { display: true, text: 'Wavelength (nm) / Pixel', color: '#888' }
                 },
@@ -681,32 +805,46 @@ function handleGraphClick(e, elements, chart, targetId) {
 
     const points = chart.getElementsAtEventForMode(e, 'nearest', { intersect: false }, true);
     if (points.length) {
-        const datasetIndex = points[0].datasetIndex;
         const index = points[0].index;
 
-        let xValue;
-        if (chart.config.type === 'scatter') {
-            xValue = chart.data.datasets[datasetIndex].data[index].x;
+        // For live camera, allow selecting any point on the graph
+        if (targetId === 'live') {
+            const pixelPeak = index;
+            if (!t.selectedPeaks.includes(pixelPeak)) {
+                t.selectedPeaks.push(pixelPeak);
+                updateGraphAnnotations(targetId);
+
+                if (t.selectedPeaks.length === 2) {
+                    showCalibrationModal();
+                }
+            }
         } else {
-            xValue = t.analysisData.x_axis[index];
-        }
+            // For single and comparison tabs, snap to detected peaks
+            let xValue;
+            if (chart.config.type === 'scatter') {
+                const datasetIndex = points[0].datasetIndex;
+                xValue = chart.data.datasets[datasetIndex].data[index].x;
+            } else {
+                xValue = t.analysisData.x_axis[index];
+            }
 
-        const peaksX = t.analysisData.peaks_x;
-        const closestPeakX = peaksX.reduce((prev, curr) => {
-            return (Math.abs(curr - xValue) < Math.abs(prev - xValue) ? curr : prev);
-        });
+            const peaksX = t.analysisData.peaks_x;
+            const closestPeakX = peaksX.reduce((prev, curr) => {
+                return (Math.abs(curr - xValue) < Math.abs(prev - xValue) ? curr : prev);
+            });
 
-        if (Math.abs(closestPeakX - xValue) > (t.analysisData.is_calibrated ? 10 : 50)) return;
+            if (Math.abs(closestPeakX - xValue) > (t.analysisData.is_calibrated ? 10 : 50)) return;
 
-        const peakIdx = peaksX.indexOf(closestPeakX);
-        const pixelPeak = t.analysisData.peaks[peakIdx];
+            const peakIdx = peaksX.indexOf(closestPeakX);
+            const pixelPeak = t.analysisData.peaks[peakIdx];
 
-        if (!t.selectedPeaks.includes(pixelPeak)) {
-            t.selectedPeaks.push(pixelPeak);
-            updateGraphAnnotations(targetId);
+            if (!t.selectedPeaks.includes(pixelPeak)) {
+                t.selectedPeaks.push(pixelPeak);
+                updateGraphAnnotations(targetId);
 
-            if (t.selectedPeaks.length === 2) {
-                showCalibrationModal();
+                if (t.selectedPeaks.length === 2) {
+                    showCalibrationModal();
+                }
             }
         }
     }
@@ -778,6 +916,11 @@ function submitCalibration() {
     })
         .then(res => res.json())
         .then(data => {
+            if (data.error) {
+                alert("Calibration failed: " + data.error);
+                return;
+            }
+            alert(`Calibration Complete!\nSlope: ${data.slope.toFixed(4)}\nIntercept: ${data.intercept.toFixed(2)}`);
             document.getElementById('calibration-modal').classList.add('hidden');
             t.selectedPeaks = [];
             analyzeImage(targetId);
